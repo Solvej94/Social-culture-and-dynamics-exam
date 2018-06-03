@@ -1,0 +1,489 @@
+---
+title: "soc_cult_analysis"
+output: html_document
+authors: Line Kruse and Solvej Mathiasen
+---
+
+# Working directory and libraries 
+```{r}
+setwd("C:/Users/Bruger/Google Drev/Cognitive Science/Social and cultural cognition/Exam")
+
+library(pacman)
+p_load(ggplot2,rethinking,brms,readxl,rstan,tidyverse,coda,mvtnorm,devtools,dplyr,magrittr,forcats,tidyr,modelr,tidybayes,ggstance,ggridges,cowplot,tibble, tidybayes, ggmcmc)
+
+```
+
+
+# Data Cleaning 
+````{r}
+# data: first run strategy:conformity, proportion: 0, 20, 40, 60, 80, 100
+raw1 <- read.table("run_conformity_clean.txt", comment.char = "#", sep=",", header = T)
+
+# agrregate: summarize over repeated sampling  
+data1 <-aggregate(raw1, by=list(raw1$proportion_ind,raw1$SL_Strategy,raw1$n.type,raw1$Task_environment,raw1$X.step.),                     FUN=mean, na.rm=TRUE)
+
+# clean data: select columns
+data1 <- select(data1,Group.1,Group.2,Group.3,Group.4,Group.5,mean_payoff_all,mean_payoff_ind,mean_payoff_soc)
+
+# clean data: rename columns
+data1 <- rename(data1, proportion = Group.1, strategy = Group.2, network = Group.3, task = Group.4, time = Group.5)
+
+# clean data: remove punctuations 
+data1 <- as.data.frame(sapply(data1, function(x) gsub("\"", "", x)))
+
+# data: second run strategy:conformity, proportion: 0
+raw2 <- read.table("run_conformity_2_clean.txt", comment.char = "#", sep=",", header = T)
+
+# agrregate: summarize over repeated sampling  
+data2 <-aggregate(raw2, by=list(raw2$proportion_ind,raw2$SL_Strategy,raw2$n.type,raw2$Task_environment,raw2$X.step.),                     FUN=mean, na.rm=TRUE)
+
+# clean data: select columns
+data2 <- select(data2,Group.1,Group.2,Group.3,Group.4,Group.5,mean_payoff_all,mean_payoff_ind,mean_payoff_soc)
+
+# clean data: rename columns
+data2 <- rename(data2, proportion = Group.1, strategy = Group.2, network = Group.3, task = Group.4, time = Group.5)
+
+# clean data: remove punctuations 
+data2 <- as.data.frame(sapply(data2, function(x) gsub("\"", "", x)))
+
+# bind data-frames
+df_conformity <- rbind(data1,data2)
+
+# save data
+write.csv(df_conformity, file = "df_conformity.csv")
+
+````
+
+
+# Read in combined data 
+```{r}
+
+data <- read.table("all_data.csv", comment.char = "#", sep=",", header = T)
+data <- select(data, -X)
+data$time <- as.numeric(data$time)
+data$time <- scale(data$time)
+data$proportion <- as.numeric(data$proportion)
+data$proportion <- scale(data$proportion)
+
+```
+
+
+# Models with mean_payoff_all as outcome 
+```{r}
+M0 <- brms::brm(mean_payoff_all~1,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M0)
+saveRDS(M0, file = "M0")
+```
+
+```{r}
+M1 <- brms::brm(mean_payoff_all~1+time+task,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M1)
+saveRDS(M1, file = "M1")
+```
+
+```{r}
+M2 <- brms::brm(mean_payoff_all~1+time+task*network,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M2)
+saveRDS(M2, file = "M2")
+```
+
+``` {r}
+M3 <- brms::brm(mean_payoff_all~1+time+task*network*strategy,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M3)
+saveRDS(M3, file = "M3")
+```
+
+```{r}
+M4 <- brms::brm(mean_payoff_all~1+time+task*network*strategy*proportion,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M4)
+saveRDS(M4, file = "M4")
+```
+
+```{r}
+M5 <- brms::brm(mean_payoff_all~1+time+task*network*strategy+task*network*proportion,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M5)
+saveRDS(M5, file = "M5")
+```
+
+```{r}
+M6 <- brms::brm(mean_payoff_all~1+time*task*network*strategy*proportion,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M6)
+saveRDS(M6, file = "M6")
+```
+
+```{r}
+M7 <- brms::brm(mean_payoff_all~1+time*task*network*strategy+time*task*network*proportion,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M7)
+saveRDS(M7, file = "M7")
+```
+
+```{r}
+M8 <- brms::brm(mean_payoff_all~1+time,family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M8)
+saveRDS(M8, file = "M8")
+```
+
+```{r}
+M9 <- brms::brm(mean_payoff_all~1+time+task*network+network*strategy+network*proportion, family = "gaussian", data = data, cores = 4,chains = 2,iter = 2000)
+summary(M9)
+saveRDS(M9, file = "M9")
+
+```
+
+
+# Model selection
+```{r} 
+# read in models 
+M0 <- readRDS("M0")
+M1 <- readRDS("M1")
+M2 <- readRDS("M2")
+M3 <- readRDS("M3")
+M4 <- readRDS("M4")
+M5 <- readRDS("M5")
+M6 <- readRDS("M6")
+M7 <- readRDS("M7")
+M8 <- readRDS("M8")
+M9 <- readRDS("M9")
+
+# leave-one-out validation 
+loo(M0,M1,M2,M3,M4,M5,M6,M7,M8,M9)
+
+# WAIC validation
+WAIC(M0,M1,M2,M3,M4,M5,M6,M7,M8,M9)
+
+# M6 wins 
+
+```
+
+
+# Summary of model M6
+```{r}
+
+M6 <- readRDS("M6")
+
+summary(M6)
+parameters(M6)
+
+```
+
+
+# Plot marginal effects
+```{r}
+
+
+# plot 1: social learners, simple/complex, full 
+con_1 <- data.frame(proportion = -1.581116,task="simple",network = "full")
+ma_1 <- marginal_effects(M6,conditions = con_1)
+#plot(ma_1,points=TRUE, point_args = list(size = 0.5, alpha = 1/10))
+plot(ma_1)
+
+con_2 <- data.frame(proportion = -1.581116,task="complex",network = "full")
+ma_2 <- marginal_effects(M6,conditions = con_2)
+#plot(ma_2,points=TRUE, point_args = list(size = 0.5, alpha = 1/10))
+plot(ma_2)
+
+# plot 1.1: individual learners, simple/complex, full 
+con_1.1 <- data.frame(proportion = 1.581116,task="simple",network = "full")
+ma_1.1 <- marginal_effects(M6,conditions = con_1.1)
+#plot(ma_1.1,points=TRUE, point_args = list(size = 0.5, alpha = 1/10))
+plot(ma_1.1)
+
+con_2.1 <- data.frame(proportion = 1.581116,task="complex",network = "full")
+ma_2.1 <- marginal_effects(M6,conditions = con_2.1, select_points = 0.1)
+#plot(ma_2.1,points=TRUE, point_args = list(size = 0.5, alpha = 1/10))
+plot(ma_2.1)
+
+# plot 2: social learners, complex, full/nn
+con_3 <- data.frame(proportion = -1.581116, task = "complex", network = "full")
+ma_3 <- marginal_effects(M6,conditions = con_3)
+plot(ma_3)
+
+con_4 <- data.frame(proportion = -1.581116, task = "complex", network = "nn")
+ma_4 <- marginal_effects(M6,conditions = con_4)
+plot(ma_4)
+
+# individual learners, complex, full/nn
+con_3.1 <- data.frame(proportion = 1.581116, task = "complex", network = "full")
+ma_3.1 <- marginal_effects(M6,conditions = con_3.1)
+plot(ma_3.1)
+
+con_4.1 <- data.frame(proportion = 1.581116, task = "complex", network = "nn")
+ma_4.1 <- marginal_effects(M6,conditions = con_4.1)
+plot(ma_4.1)
+
+# plot 3: time=200, complex, full/nn different proportions
+con_5 <- data.frame(time = 1.723431, task = "complex", network = "full")
+ma_5 <- marginal_effects(M6,conditions = con_5)
+plot(ma_5)
+
+con_6 <- data.frame(time = 1.723431, task = "complex", network = "nn")
+ma_6 <- marginal_effects(M6,conditions = con_6)
+plot(ma_6[[15]])
+
+
+#### problem: select_points is used as argument for both time and proportion (the numerical predictors)
+
+
+```
+
+
+# Predictive posterior check
+```{r}
+
+# Plot
+pp_check(M6)
+
+# Bayes R2
+bayes_R2(M6)
+
+pp <- predict(M6)
+head(pp)
+
+```
+
+
+# Plot data
+```{r}
+
+
+# plot 1: 
+subset_1 <- subset(data,data$network=='full')
+subset_1 <- subset(subset_1,subset_1$proportion==0)
+subset_1 <- subset(subset_1,subset_1$task=='complex')
+
+ggplot(subset_1,aes(x=time,y=mean_payoff_all, col=strategy))+
+  geom_smooth()+
+  ylim(0,1)
+
+
+# plot 1.2
+subset_1.2 <- subset(data,data$network=='full')
+subset_1.2 <- subset(subset_1.2,subset_1.2$proportion==100)
+subset_1.2 <- subset(subset_1.2,subset_1.2$task=='complex')
+
+ggplot(subset_1.2,aes(x=time,y=mean_payoff_all))+
+  geom_smooth()+
+  ylim(0,1)
+
+
+#plot 2
+subset_2 <- subset(data,data$task=='complex')
+subset_2 <- subset(subset_2,subset_2$proportion==0)
+subset_2 <- subset(subset_2,subset_2$network=='nn')
+
+ggplot(subset_2,aes(x=time,y=mean_payoff_all, col=strategy))+
+  geom_smooth()+
+  ylim(0,1)
+  #facet_wrap(~network)
+
+
+#plot 2.2
+subset_2.2 <- subset(data,data$task=='complex')
+subset_2.2 <- subset(subset_2.2,subset_2.2$proportion==100)
+subset_2.2 <- subset(subset_2.2,subset_2.2$network=='nn')
+
+ggplot(subset_2.2,aes(x=time,y=mean_payoff_all))+
+  geom_smooth()+
+   ylim(0,1)
+  #facet_wrap(~network)
+
+
+# plot 3
+subset_3 <- subset(data,data$task=='complex')
+subset_3 <- subset(subset_3,subset_3$time==200)
+subset_3 <- subset(subset_3,subset_3$network=='nn')
+
+ggplot(subset_3,aes(x=proportion,y=mean_payoff_all))+
+  geom_point(aes(shape = factor(strategy)))+
+  geom_smooth()+
+  ylim(0,1)
+  #facet_wrap(~network)
+
+
+# plot 4
+subset_4 <- subset(data,data$task=='complex') %>% 
+  subset(proportion==50) %>% 
+  subset(network=='full') %>% 
+  subset(strategy=='Conformity')
+
+plot(x=subset_4$time,y=subset_4$mean_payoff_all, type = p, main = "green:all, red:social, blue:individual", ylab = "payoff", xlab = "time", asp = c(0,1))+
+  points(col="forestgreen")
+par(new=TRUE)  
+plot(x=subset_4$time,y=subset_4$mean_payoff_soc, type = p, main = "green:all, red:social, blue:individual", ylab = "payoff", xlab = "time", asp = c(0,1))+
+  points(col="darkred")
+par(new=TRUE)
+plot(x=subset_4$time,y=subset_4$mean_payoff_ind, type = p, main = "green:all, red:social, blue:individual", ylab = "payoff", xlab = "time", asp = c(0,1))+
+  points(col="blue")
+
+
+```
+
+
+# Preprocessing. Max_mean_payoff_all as outcome
+```{r}
+
+data2 <- data[which(data$time==200),]
+
+# agrregate: summarize over repeated sampling  
+data2 <-aggregate(data2, by=list(data2$proportion,data2$strategy,data2$network,data2$task,data2$time),                     FUN=mean, na.rm=TRUE)
+
+# clean data: select columns
+data2 <- select(data2,Group.1,Group.2,Group.3,Group.4,Group.5,mean_payoff_all,mean_payoff_ind,mean_payoff_soc)
+
+# clean data: rename columns
+data2 <- rename(data2, proportion = Group.1, strategy = Group.2, network = Group.3, task = Group.4, time = Group.5)
+
+```
+
+
+# Read in data (max payoff)
+```{r}
+
+# data: first run strategy:conformity, proportion: 0, 20, 40, 60, 80, 100
+raw1 <- read.table("run_conformity_clean.txt", comment.char = "#", sep=",", header = T)
+filt_1 <- raw1[which(raw1$X.step.==200),]
+
+# data: second run strategy:conformity, proportion: 10, 30, 50, 70, 90
+raw2 <- read.table("run_conformity_2_clean.txt", comment.char = "#", sep=",", header = T)
+filt_2 <- raw2[which(raw2$X.step.==200),] 
+
+# data: third run all
+raw3 <- read.table("run_all_3_clean.txt", comment.char = "#", sep=",", header = T)
+filt_3 <- raw3[which(raw3$X.step.==200),] 
+
+# data: first run strategy:best member, proportion: 0, 20, 40, 60, 80, 100
+raw4 <- read.table("run_bestmember_clean.txt", comment.char = "#", sep=",", header = T)
+filt_4 <- raw4[which(raw4$X.step.==200),]
+
+# data: first run strategy:best member, proportion: proportion: 10, 30, 50, 70, 90
+raw5 <- read.table("run2_bestmember_clean.txt", comment.char = "#", sep=",", header = T)
+filt_5 <- raw5[which(raw5$X.step.==200),]
+
+# all data (20 runs) only tic=200
+data_max <- rbind(filt_1,filt_2,filt_3,filt_4,filt_5)
+
+# clean data: remove punctuations 
+data_max <- as.data.frame(sapply(data_max, function(x) gsub("\"", "", x)))
+
+# select 
+data_max <- select(data_max, -resize.nodes.,-num.nodes)
+
+# rename
+data_max <- rename(data_max, run = X.run.number., proportion = proportion_ind, strategy = SL_Strategy, network = n.type, task = Task_environment, time = X.step.)
+
+# change vectors 
+data_max$mean_payoff_all <- as.numeric(as.character(data_max$mean_payoff_all))
+data_max$mean_payoff_ind <- as.numeric(as.character(data_max$mean_payoff_ind))
+data_max$mean_payoff_soc <- as.numeric(as.character(data_max$mean_payoff_soc))
+data_max$proportion <- as.factor(data_max$proportion)
+
+#save
+write.csv(data_max, file = "data_max")
+
+```
+
+
+# Models (max payoff)
+```{r}
+Ma <- brms::brm(mean_payoff_all~1+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma0)
+saveRDS(Ma, file = "Ma")
+```
+
+```{r}
+Ma0 <- brms::brm(mean_payoff_all~1+proportion+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma0)
+saveRDS(Ma0, file = "Ma0")
+```
+
+```{r}
+Ma1 <- brms::brm(mean_payoff_all~1+strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma1)
+saveRDS(Ma1, file = "Ma1")
+```
+
+```{r}
+Ma2 <- brms::brm(mean_payoff_all~1+network+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma2)
+saveRDS(Ma2, file = "Ma2")
+```
+
+```{r}
+Ma3 <- brms::brm(mean_payoff_all~1+task+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma3)
+saveRDS(Ma3, file = "Ma3")
+```
+
+```{r}
+Ma4 <- brms::brm(mean_payoff_all~1+task+network+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma4)
+saveRDS(Ma4, file = "Ma4")
+```
+
+```{r}
+Ma5 <- brms::brm(mean_payoff_all~1+task+network+proportion+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma5)
+saveRDS(Ma5, file = "Ma5")
+```
+
+```{r}
+Ma6 <- brms::brm(mean_payoff_all~1+task+network+proportion+strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma6)
+saveRDS(Ma6, file = "Ma6")
+```
+
+```{r}
+Ma7 <- brms::brm(mean_payoff_all~1+task*network+proportion+strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma7)
+saveRDS(Ma7, file = "Ma7")
+```
+
+```{r}
+Ma8 <- brms::brm(mean_payoff_all~1+task*network*proportion+strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma8)
+saveRDS(Ma8, file = "Ma8")
+```
+
+```{r}
+Ma9 <- brms::brm(mean_payoff_all~1+task*network*proportion*strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma9)
+saveRDS(Ma9, file = "Ma9")
+```
+
+```{r}
+Ma10 <- brms::brm(mean_payoff_all~1+task*network*proportion+task*network*strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma10)
+saveRDS(Ma10, file = "Ma10")
+```
+
+```{r}
+Ma11 <- brms::brm(mean_payoff_all~1+task+network*proportion+network*strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma11)
+saveRDS(Ma11, file = "Ma11")
+```
+
+```{r}
+Ma12 <- brms::brm(mean_payoff_all~1+task+network*proportion*strategy+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma12)
+saveRDS(Ma12, file = "Ma12")
+```
+
+```{r}
+Ma13 <- brms::brm(mean_payoff_all~1+task+network*proportion+(1|run),family = "gaussian", data = data_max, cores = 4,chains = 2,iter = 2000)
+summary(Ma13)
+saveRDS(Ma13, file = "Ma13")
+```
+
+
+# Model comparison (max payoff)
+```{r}
+loo(Ma,Ma0,Ma1,Ma2,Ma3,Ma4,Ma5,Ma6,Ma7,Ma8,Ma9,Ma10,Ma11,Ma12)
+
+WAIC(Ma,Ma0,Ma1,Ma2,Ma3,Ma4,Ma5,Ma6,Ma7,Ma8,Ma9,Ma10,Ma11,Ma12,Ma13)
+WAIC(Ma8,Ma9,Ma10)
+
+
+```
+
+
+
